@@ -1,9 +1,11 @@
 """
-.. module:: wti_convert
+.. module:: wti_convert_kxp
    :platform: Unix
-   :synopsis: Ein Script zum Konvertieren von WTI-XML in PICA+
+   :synopsis: Ein Script zum Konvertieren von WTI-XML in (K10Plus) PICA+
 
 .. moduleauthor:: Moritz Horn <moritz.horn@gbv.de>
+
+.. version:: 0.1 (29.03.2019)
 
 """
 
@@ -73,13 +75,14 @@ def _match_isbns(isbn10, isbn13):
       short10 = i10[:-2]
 
       if short13 == short10:
-        pairs.append({'004A': [{'0': i10},{'A': i13}]})
+        pairs.append({'004A': [{'0': i10}]})
+        pairs.append({'004A': [{'0': i13}]})
         i10_matched.append(index)
         match = True
         break
 
     if match == False:
-      pairs.append({'004A': [{'A': i13}]})
+      pairs.append({'004A': [{'0': i13}]})
 
   for index, i10 in enumerate(isbn10):
     if index not in i10_matched:
@@ -248,11 +251,11 @@ def process_document(document):
   doc_id = system_info.find('documentID')
 
   if doc_id is not None and doc_id.text is not None:
-    record.append({'007G': [{'c': "WTI"}, {'0': doc_id.text }]})
+    record.append({'007G': [{'i': "WTI"}, {'0': doc_id.text }]})
 
   else:
     log.error("No WTI-ID found!")
-    pass
+    return [record, stats]
 
   # Formal Info
 
@@ -291,7 +294,7 @@ def process_document(document):
       doc_cr.replace("Copyright", "©")
       doc_cr.replace("(c)", "©")
       doc_cr.replace("(C)", "©")
-      record.append({'037I': [{'a': doc_cr}]})
+      record.append({'037I': [{'a': 'Nutzungsrecht: ' + doc_cr}]})
 
   ## Sizes
 
@@ -394,7 +397,7 @@ def process_document(document):
       if loc_type == 'url':
         url_text = loc.text
         url_found = True
-        record.append({'009P/05': [{'a': url_text}]})
+        record.append({'017D': [{'u': url_text}]})
 
         if loc_subtype == 'doi':
           doi = urlsplit(url_text).path[1:]
@@ -438,7 +441,7 @@ def process_document(document):
 
       if alt_lang and clean_alt:
         stats['title']['alt'].append(alt_lang)
-        record.append({'021F': [{'a': clean_alt}]})
+        record.append({'021G': [{'a': clean_alt}]})
 
   ## Abstracts
 
@@ -464,7 +467,7 @@ def process_document(document):
         cleaned_abstract += (' [' + copyright + ']')
 
       if cleaned_abstract:
-        record.append({'020F': [{'a': cleaned_abstract}]})
+        record.append({'047I': [{'a': cleaned_abstract}]})
 
   ## Authors
 
@@ -605,7 +608,7 @@ def process_document(document):
 
       elif len(isbn13) > 0:
         for isbn in isbn13:
-          record.append({'004A': [{'A': isbn}]})
+          record.append({'004A': [{'0': isbn}]})
 
       elif len(isbn10) > 0:
         for isbn in isbn10:
@@ -653,28 +656,28 @@ def process_document(document):
           if material_code == 'Osx':
             for i in eissn:
               journal_fields.append({'0': i})
-              greater_fields.append({'C': "ISS"})
+              greater_fields.append({'C': "ISSN"})
               greater_fields.append({'6': i})
 
           elif material_code == 'Asx':
             for i in issn:
               journal_fields.append({'0': i})
-              greater_fields.append({'C': "ISS"})
+              greater_fields.append({'C': "ISSN"})
               greater_fields.append({'6': i})
 
         elif len(isbn13) > 0:
           for isbn in isbn13:
             journal_fields.append({'i': isbn})
-            greater_fields.append({'C': "ISB"})
+            greater_fields.append({'C': "ISBN"})
             greater_fields.append({'6': isbn})
 
         elif len(isbn10) > 0:
           for isbn in isbn10:
             journal_fields.append({'i': isbn})
-            greater_fields.append({'C': "ISB"})
+            greater_fields.append({'C': "ISBN"})
             greater_fields.append({'6': isbn})
 
-        record.append({'027D': journal_fields})
+        #record.append({'027D': journal_fields})
 
         record.append({'039B': greater_fields})
 
@@ -709,7 +712,7 @@ def process_document(document):
       for c in classifications:
         c_name = c.get('classificationName')
         stats['classifications']['types'].append(c_name)
-        nots = [{'b': c_name}]
+        nots = [{'i': c_name}]
 
         for cl in c:
           nots.append({'a': cl.find('code').text})
@@ -721,7 +724,7 @@ def process_document(document):
       for sub in subjects:
         if sub.text is not None:
           stats['subjects']['values'].append(sub.text)
-          record.append({'044L/00': [{'S': 's'},{'a': sub.text}]})
+          record.append({'044N': [{'S': 's'},{'a': sub.text}]})
 
   # Functional Info
 
@@ -768,7 +771,7 @@ def process_document(document):
   if free_terms is not None:
     for ft in free_terms:
       if ft.text is not None:
-        record.append({'044L/01': [{'S': "s"}, {'a': ft.text}]})
+        record.append({'044N': [{'S': "s"}, {'a': ft.text}]})
 
   return [record, stats]
 
@@ -1082,50 +1085,55 @@ def handle_xml(xml_path, xml_filename, num_files, stats_only, is_update, out_pat
           docs_in_file += 1
           all_stats['num'] += 1
 
-          for topic, values in stats.items():
-            if type(values) is dict:
-              if topic not in all_stats:
-                all_stats[topic] = {}
+          if len(record) > 0:
+            for topic, values in stats.items():
+              if type(values) is dict:
+                if topic not in all_stats:
+                  all_stats[topic] = {}
 
-              for k, val in values.items():
-                if k not in all_stats[topic]:
-                  all_stats[topic][k] = {}
+                for k, val in values.items():
+                  if k not in all_stats[topic]:
+                    all_stats[topic][k] = {}
 
-                if type(val) is list:
-                  for v in val:
-                    if v not in all_stats[topic][k]:
-                      all_stats[topic][k][v] = 1
+                  if type(val) is list:
+                    for v in val:
+                      if v not in all_stats[topic][k]:
+                        all_stats[topic][k][v] = 1
+
+                      else:
+                        all_stats[topic][k][v] += 1
+
+                  elif type(val) is int:
+                    if str(val) not in all_stats[topic][k]:
+                      all_stats[topic][k][str(val)] = 1
 
                     else:
-                      all_stats[topic][k][v] += 1
+                      all_stats[topic][k][str(val)] += 1
 
-                elif type(val) is int:
-                  if str(val) not in all_stats[topic][k]:
-                    all_stats[topic][k][str(val)] = 1
+                  elif type(val) is str:
+                    if val not in all_stats[topic][k]:
+                      all_stats[topic][k][val] = 1
 
-                  else:
-                    all_stats[topic][k][str(val)] += 1
-
-                elif type(val) is str:
-                  if val not in all_stats[topic][k]:
-                    all_stats[topic][k][val] = 1
+                    else:
+                      all_stats[topic][k][val] += 1
 
                   else:
-                    all_stats[topic][k][val] += 1
+                    log.error("Could not process stats for " + topic + " -> " + k)
 
-                else:
-                  log.error("Could not process stats for " + topic + " -> " + k)
+              else:
+                log.error("Problem identifying stats for " + topic)
 
-            else:
-              log.error("Problem identifying stats for " + topic)
 
-          if not stats_only:
-            try:
-              write_to_file(record, docs_in_file, combined)
+            if not stats_only:
+              try:
+                write_to_file(record, docs_in_file, combined)
 
-            except:
-              log.error("Problem writing to file.")
-              log.error(sys.exc_info()[0])
+              except:
+                log.error("Problem writing to file.")
+                log.error(sys.exc_info()[0])
+
+          else:
+            log.warning("Skipped record #" + str(docs_in_file) + "..")
 
           document.clear()
 
