@@ -1,0 +1,1390 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml" lang="de">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>wti_convert &#8212; WTI2PICA+ 0.2 Dokumentation</title>
+    <link rel="stylesheet" href="../_static/alabaster.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.2',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true,
+        SOURCELINK_SUFFIX: '.txt'
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="../_static/translations.js"></script>
+    <link rel="index" title="Stichwortverzeichnis" href="../genindex.html" />
+    <link rel="search" title="Suche" href="../search.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head>
+  <body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Quellcode für wti_convert</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">.. module:: wti_convert</span>
+<span class="sd">   :platform: Unix</span>
+<span class="sd">   :synopsis: Ein Script zum Konvertieren von WTI-XML in PICA+</span>
+
+<span class="sd">.. moduleauthor:: Moritz Horn &lt;moritz.horn@gbv.de&gt;</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">from</span> <span class="nn">lxml</span> <span class="k">import</span> <span class="n">etree</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">cgi</span>
+<span class="kn">import</span> <span class="nn">pycountry</span>
+<span class="kn">import</span> <span class="nn">html</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">from</span> <span class="nn">urllib.parse</span> <span class="k">import</span> <span class="n">urlsplit</span>
+<span class="kn">from</span> <span class="nn">pprint</span> <span class="k">import</span> <span class="n">pprint</span>
+<span class="kn">import</span> <span class="nn">statistics</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">gzip</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">requests</span>
+<span class="kn">import</span> <span class="nn">isbnlib</span>
+
+<span class="n">env</span> <span class="o">=</span> <span class="s1">&#39;.&#39;</span>
+<span class="k">if</span> <span class="s1">&#39;VIRTUAL_ENV&#39;</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">:</span>
+  <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s1">&#39;VIRTUAL_ENV&#39;</span><span class="p">]</span>
+
+<span class="k">class</span> <span class="nc">Constants</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+  <span class="n">STATS_PATH</span> <span class="o">=</span> <span class="s1">&#39;./statistics/&#39;</span>
+  <span class="n">HISTORY_FNAME</span> <span class="o">=</span> <span class="s1">&#39;last_run.json&#39;</span>
+  <span class="n">OUTPUT_PATH</span> <span class="o">=</span> <span class="s1">&#39;./output/&#39;</span>
+  <span class="n">OUTPUT_FNAME</span> <span class="o">=</span> <span class="s1">&#39;wti_pica&#39;</span>
+  <span class="n">USAGE_STRING</span> <span class="o">=</span> <span class="s2">&quot;Usage: &#39;python3 wti_convert.py [&#39;--stats_only&#39;|&#39;--no_stats&#39;|&#39;--update&#39;] [--in directory/|/path/to/file] [--out directory/]&quot;</span>
+
+<span class="c1"># Logging</span>
+
+<span class="n">log_path</span> <span class="o">=</span> <span class="n">env</span> <span class="o">+</span> <span class="s1">&#39;/logs/&#39;</span>
+<span class="n">current_date</span> <span class="o">=</span> <span class="s1">&#39;{:%Y-%m-</span><span class="si">%d</span><span class="s1">}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">())</span>
+<span class="n">logfname</span> <span class="o">=</span> <span class="s1">&#39;logs_&#39;</span> <span class="o">+</span> <span class="n">current_date</span> <span class="o">+</span> <span class="s1">&#39;.log&#39;</span>
+
+<span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">filename</span><span class="o">=</span><span class="n">log_path</span> <span class="o">+</span> <span class="n">logfname</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+<span class="n">log</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">()</span>
+<span class="n">log</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+
+<span class="n">ch</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+<span class="n">ch</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+<span class="n">formatter</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span><span class="s1">&#39;</span><span class="si">%(asctime)s</span><span class="s1"> </span><span class="si">%(levelname)s</span><span class="s1"> - </span><span class="si">%(message)s</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">ch</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">formatter</span><span class="p">)</span>
+<span class="n">log</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">ch</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="_match_isbns"><a class="viewcode-back" href="../wti_convert.html#wti_convert._match_isbns">[Doku]</a><span class="k">def</span> <span class="nf">_match_isbns</span><span class="p">(</span><span class="n">isbn10</span><span class="p">,</span> <span class="n">isbn13</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Versucht aus getrennten Listen von ISBN-10 und ISBN-13 Paare zu bilden.</span>
+
+<span class="sd">  :param isbn10: Liste mit ISBN-10</span>
+<span class="sd">  :type isbn10: list</span>
+<span class="sd">  :param isbn13: Liste mit ISBN-13</span>
+<span class="sd">  :type isbn13: list</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+  <span class="n">pairs</span> <span class="o">=</span> <span class="p">[]</span>
+  <span class="n">i10_matched</span> <span class="o">=</span> <span class="p">[]</span>
+
+  <span class="k">for</span> <span class="n">i13</span> <span class="ow">in</span> <span class="n">isbn13</span><span class="p">:</span>
+    <span class="n">short13</span> <span class="o">=</span> <span class="n">i13</span><span class="p">[</span><span class="mi">4</span><span class="p">:</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">i10</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">isbn10</span><span class="p">):</span>
+      <span class="n">short10</span> <span class="o">=</span> <span class="n">i10</span><span class="p">[:</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+
+      <span class="k">if</span> <span class="n">short13</span> <span class="o">==</span> <span class="n">short10</span><span class="p">:</span>
+        <span class="n">pairs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;004A&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="n">i10</span><span class="p">},{</span><span class="s1">&#39;A&#39;</span><span class="p">:</span> <span class="n">i13</span><span class="p">}]})</span>
+        <span class="n">i10_matched</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">index</span><span class="p">)</span>
+        <span class="n">match</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">break</span>
+
+    <span class="k">if</span> <span class="n">match</span> <span class="o">==</span> <span class="kc">False</span><span class="p">:</span>
+      <span class="n">pairs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;004A&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;A&#39;</span><span class="p">:</span> <span class="n">i13</span><span class="p">}]})</span>
+
+  <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">i10</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">isbn10</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">index</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">i10_matched</span><span class="p">:</span>
+      <span class="n">pairs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;004A&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="n">i10</span><span class="p">}]})</span>
+
+  <span class="k">return</span> <span class="n">pairs</span></div>
+
+
+
+<div class="viewcode-block" id="_process_tails"><a class="viewcode-back" href="../wti_convert.html#wti_convert._process_tails">[Doku]</a><span class="k">def</span> <span class="nf">_process_tails</span><span class="p">(</span><span class="n">node</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Verarbeitet mögliche HTML-Tags in einem XML-Knoten</span>
+
+<span class="sd">  :param node: Der zu untersuchende XML-Knoten</span>
+<span class="sd">  :type node: etree._Element</span>
+<span class="sd">  :returns: str</span>
+
+<span class="sd">  &quot;&quot;&quot;</span>
+  <span class="n">c_node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">text</span>
+
+  <span class="n">tails</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">xpath</span><span class="p">(</span><span class="s1">&#39;child::*&#39;</span><span class="p">)</span>
+  <span class="k">if</span> <span class="n">tails</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">tails</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">c_node</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">((</span><span class="s2">&quot;&lt;&quot;</span> <span class="o">+</span> <span class="n">child</span><span class="o">.</span><span class="n">tag</span> <span class="o">+</span> <span class="s2">&quot;&gt;&quot;</span> <span class="o">+</span> <span class="n">child</span><span class="o">.</span><span class="n">text</span> <span class="o">+</span> <span class="s2">&quot;&lt;/&quot;</span> <span class="o">+</span> <span class="n">child</span><span class="o">.</span><span class="n">tag</span> <span class="o">+</span> <span class="s2">&quot;&gt;&quot;</span> <span class="k">if</span> <span class="n">child</span><span class="o">.</span><span class="n">tag</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">child</span><span class="o">.</span><span class="n">tag</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;sub&quot;</span><span class="p">,</span><span class="s2">&quot;sup&quot;</span><span class="p">]</span> <span class="ow">and</span> <span class="n">child</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="n">etree</span><span class="o">.</span><span class="n">_Element</span><span class="p">)</span> <span class="k">else</span> <span class="nb">str</span><span class="p">(</span><span class="n">child</span><span class="p">)</span> <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">xpath</span><span class="p">(</span><span class="s1">&#39;child::*|text()&#39;</span><span class="p">))</span>
+
+  <span class="k">return</span> <span class="n">c_node</span></div>
+
+
+
+<div class="viewcode-block" id="_decide_material"><a class="viewcode-back" href="../wti_convert.html#wti_convert._decide_material">[Doku]</a><span class="k">def</span> <span class="nf">_decide_material</span><span class="p">(</span><span class="n">dep</span><span class="p">,</span> <span class="n">url</span><span class="p">,</span> <span class="n">genres</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Diese Funktion generiert den Materialcode (002@) aus Angaben im XML.</span>
+
+<span class="sd">  :param dep: Abhängigkeit</span>
+<span class="sd">  :type dep: bool</span>
+<span class="sd">  :param url: Wurde eine URL gefunden?</span>
+<span class="sd">  :type url: bool</span>
+<span class="sd">  :param genres: Liste von documentGenreCodes</span>
+<span class="sd">  :type genres: list</span>
+<span class="sd">  :returns: str -- der Materialcode</span>
+
+<span class="sd">  &quot;&quot;&quot;</span>
+
+  <span class="n">code</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="s2">&quot;x&quot;</span><span class="p">]</span>
+
+  <span class="k">if</span> <span class="n">url</span><span class="p">:</span>
+    <span class="n">code</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;O&#39;</span>
+
+  <span class="k">else</span><span class="p">:</span>
+    <span class="n">code</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;A&#39;</span>
+
+  <span class="k">if</span> <span class="n">dep</span><span class="p">:</span>
+    <span class="n">code</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;s&#39;</span>
+
+  <span class="k">else</span><span class="p">:</span>
+    <span class="n">code</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;a&#39;</span>
+
+  <span class="k">return</span> <span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">code</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="process_document"><a class="viewcode-back" href="../wti_convert.html#wti_convert.process_document">[Doku]</a><span class="k">def</span> <span class="nf">process_document</span><span class="p">(</span><span class="n">document</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Diese Funktion extrahiert PICA+-Felder und Statistiken zu diesen aus dem XML</span>
+
+<span class="sd">  :param document: Der XML-Knoten des Titels</span>
+<span class="sd">  :type document: etree._Element</span>
+<span class="sd">  :returns: list</span>
+
+<span class="sd">  &quot;&quot;&quot;</span>
+
+  <span class="n">xml_lang</span> <span class="o">=</span> <span class="s1">&#39;{http://www.w3.org/XML/1998/namespace}lang&#39;</span>
+  <span class="n">dependend</span> <span class="o">=</span> <span class="kc">True</span>
+  <span class="n">url_found</span> <span class="o">=</span> <span class="kc">False</span>
+  <span class="n">record</span> <span class="o">=</span> <span class="p">[]</span>
+
+  <span class="c1"># Structure of Stats</span>
+
+  <span class="n">stats</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;genres&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;values&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;types&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;values&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;authors&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;with_aff&#39;</span><span class="p">:</span> <span class="mi">0</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;identifiers&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;isbn10&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;isbn13&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;isbnX&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;issn&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;eissn&#39;</span><span class="p">:</span> <span class="mi">0</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;lang&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;names&#39;</span><span class="p">:</span> <span class="p">[],</span>
+      <span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;iso3&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;iso2&#39;</span><span class="p">:</span> <span class="mi">0</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;pages&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="mi">0</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;size&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;locations&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;types&#39;</span><span class="p">:</span> <span class="p">[],</span>
+      <span class="s1">&#39;subtypes&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;abstracts&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;tags&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;lang&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;title&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;lang&#39;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+      <span class="s1">&#39;tags&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;alt&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;conference&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;copyright&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;publisher&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;place&#39;</span><span class="p">:</span> <span class="mi">0</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;date&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;values&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;classifications&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;types&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;subjects&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;values&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">},</span>
+    <span class="s1">&#39;thesaurus&#39;</span><span class="p">:{</span>
+      <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+      <span class="s1">&#39;des&#39;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+
+  <span class="c1"># System Info</span>
+
+  <span class="n">system_info</span> <span class="o">=</span> <span class="n">document</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;systemInfo&#39;</span><span class="p">)</span>
+
+  <span class="n">metadata_cr</span> <span class="o">=</span> <span class="n">system_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;metadataCopyright&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">metadata_cr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">metadata_cr</span> <span class="o">=</span> <span class="n">metadata_cr</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:rights&#39;</span><span class="p">,</span> <span class="n">system_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">metadata_cr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">metadata_cr</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">md_cr</span> <span class="o">=</span> <span class="n">metadata_cr</span><span class="o">.</span><span class="n">text</span>
+      <span class="n">md_cr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;Copyright&quot;</span><span class="p">,</span> <span class="s2">&quot;©&quot;</span><span class="p">)</span>
+      <span class="n">md_cr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;(c)&quot;</span><span class="p">,</span> <span class="s2">&quot;©&quot;</span><span class="p">)</span>
+
+      <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;037I&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="s1">&#39;Metadaten: &#39;</span> <span class="o">+</span> <span class="n">md_cr</span><span class="p">}]})</span>
+
+  <span class="n">doc_id</span> <span class="o">=</span> <span class="n">system_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;documentID&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">doc_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">doc_id</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;007G&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;c&#39;</span><span class="p">:</span> <span class="s2">&quot;WTI&quot;</span><span class="p">},</span> <span class="p">{</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="n">doc_id</span><span class="o">.</span><span class="n">text</span> <span class="p">}]})</span>
+
+  <span class="k">else</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;No WTI-ID found!&quot;</span><span class="p">)</span>
+    <span class="k">pass</span>
+
+  <span class="c1"># Formal Info</span>
+
+  <span class="n">formal_info</span> <span class="o">=</span> <span class="n">document</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;formalInfo&#39;</span><span class="p">)</span>
+
+  <span class="n">document_def</span> <span class="o">=</span> <span class="n">formal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;documentTypes&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;documentAdvancedType&#39;</span><span class="p">)</span>
+
+  <span class="c1">## DocumentGenres</span>
+
+  <span class="n">genre_groups</span> <span class="o">=</span> <span class="n">document_def</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="s1">&#39;documentGenreGroup&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">genre_groups</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">genre_group</span> <span class="ow">in</span> <span class="n">genre_groups</span><span class="p">:</span>
+      <span class="k">for</span> <span class="n">genre</span> <span class="ow">in</span> <span class="n">genre_group</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;genres&#39;</span><span class="p">][</span><span class="s1">&#39;values&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">genre</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;documentGenreCode&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+  <span class="c1">## DocumentTypes</span>
+
+  <span class="n">type_groups</span> <span class="o">=</span> <span class="n">document_def</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="s1">&#39;documentTypeGroup&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">type_groups</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">type_group</span> <span class="ow">in</span> <span class="n">type_groups</span><span class="p">:</span>
+      <span class="k">for</span> <span class="n">ty</span> <span class="ow">in</span> <span class="n">type_group</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;types&#39;</span><span class="p">][</span><span class="s1">&#39;values&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ty</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;documentTypeCode&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+  <span class="c1">## Copyright</span>
+
+  <span class="n">doc_copyright</span> <span class="o">=</span> <span class="n">formal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;copyright&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">doc_copyright</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">doc_copyright</span> <span class="o">=</span> <span class="n">doc_copyright</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:rights&#39;</span><span class="p">,</span> <span class="n">formal_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">doc_copyright</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">doc_copyright</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">doc_cr</span> <span class="o">=</span> <span class="n">doc_copyright</span><span class="o">.</span><span class="n">text</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;copyright&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">doc_cr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;Copyright&quot;</span><span class="p">,</span> <span class="s2">&quot;©&quot;</span><span class="p">)</span>
+      <span class="n">doc_cr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;(c)&quot;</span><span class="p">,</span> <span class="s2">&quot;©&quot;</span><span class="p">)</span>
+      <span class="n">doc_cr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;(C)&quot;</span><span class="p">,</span> <span class="s2">&quot;©&quot;</span><span class="p">)</span>
+      <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;037I&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">doc_cr</span><span class="p">}]})</span>
+
+  <span class="c1">## Sizes</span>
+
+  <span class="n">sizes</span> <span class="o">=</span> <span class="n">formal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;sizes&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">sizes</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">size</span> <span class="ow">in</span> <span class="n">sizes</span><span class="p">:</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;size&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;034D&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">size</span><span class="o">.</span><span class="n">text</span><span class="p">}]})</span>
+
+  <span class="c1">## Identifiers</span>
+
+  <span class="n">identifiers</span> <span class="o">=</span> <span class="n">formal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;identifiers&#39;</span><span class="p">)</span>
+  <span class="n">isbn10</span> <span class="o">=</span> <span class="p">[]</span>
+  <span class="n">isbn13</span> <span class="o">=</span> <span class="p">[]</span>
+  <span class="n">journal</span> <span class="o">=</span> <span class="p">[]</span>
+  <span class="n">issn</span> <span class="o">=</span> <span class="p">[]</span>
+  <span class="n">eissn</span> <span class="o">=</span> <span class="p">[]</span>
+
+  <span class="k">if</span> <span class="n">identifiers</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">identifiers</span><span class="p">:</span>
+      <span class="n">sel_type</span> <span class="o">=</span> <span class="n">i</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;identifiers&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+      <span class="k">if</span> <span class="n">sel_type</span> <span class="o">==</span> <span class="s1">&#39;isbn10&#39;</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;identifiers&#39;</span><span class="p">][</span><span class="n">sel_type</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">isbn10</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">sel_type</span> <span class="o">==</span> <span class="s1">&#39;isbn13&#39;</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;identifiers&#39;</span><span class="p">][</span><span class="n">sel_type</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">isbn13</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">sel_type</span> <span class="o">==</span> <span class="s1">&#39;isbn&#39;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">isbnlib</span><span class="o">.</span><span class="n">is_isbn10</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">):</span>
+          <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;identifiers&#39;</span><span class="p">][</span><span class="s1">&#39;isbn10&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+          <span class="n">isbn10</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">isbnlib</span><span class="o">.</span><span class="n">is_isbn13</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">):</span>
+          <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;identifiers&#39;</span><span class="p">][</span><span class="s1">&#39;isbn13&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+          <span class="n">isbn13</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+          <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;identifiers&#39;</span><span class="p">][</span><span class="s1">&#39;isbnX&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+          <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s1">&#39;Invalid isbn in TEMA&#39;</span> <span class="o">+</span> <span class="n">doc_id</span><span class="o">.</span><span class="n">text</span> <span class="o">+</span> <span class="s1">&#39;:&#39;</span> <span class="o">+</span> <span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">sel_type</span> <span class="o">==</span> <span class="s1">&#39;issn&#39;</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;identifiers&#39;</span><span class="p">][</span><span class="n">sel_type</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">journal</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+        <span class="n">issn</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">sel_type</span> <span class="o">==</span> <span class="s1">&#39;eissn&#39;</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;identifiers&#39;</span><span class="p">][</span><span class="n">sel_type</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">journal</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+        <span class="n">eissn</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+  <span class="c1">## Languages</span>
+
+  <span class="n">languages</span> <span class="o">=</span> <span class="n">formal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;documentLanguages&#39;</span><span class="p">)</span>
+
+  <span class="k">for</span> <span class="n">lang</span> <span class="ow">in</span> <span class="n">languages</span><span class="p">:</span>
+    <span class="n">langcode</span> <span class="o">=</span> <span class="n">lang</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;languageCodes&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;code&#39;</span><span class="p">)</span>
+    <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;lang&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;lang&#39;</span><span class="p">][</span><span class="s1">&#39;names&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">langcode</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">langcode</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;iso&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;639-1&#39;</span><span class="p">:</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;lang&#39;</span><span class="p">][</span><span class="s1">&#39;iso2&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">al2</span> <span class="o">=</span> <span class="n">langcode</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+
+      <span class="k">if</span> <span class="n">al2</span> <span class="o">==</span> <span class="s1">&#39;sp&#39;</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;lang&#39;</span><span class="p">][</span><span class="s1">&#39;error&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">al2</span> <span class="o">=</span> <span class="s1">&#39;es&#39;</span>
+
+      <span class="k">try</span><span class="p">:</span>
+        <span class="n">lang_obj</span> <span class="o">=</span> <span class="n">pycountry</span><span class="o">.</span><span class="n">languages</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">alpha2</span><span class="o">=</span><span class="n">al2</span><span class="p">)</span>
+
+      <span class="k">except</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;lang&#39;</span><span class="p">][</span><span class="s1">&#39;error&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+      <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">lang_obj</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;010@&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">lang_obj</span><span class="o">.</span><span class="n">bibliographic</span><span class="p">}]})</span>
+
+    <span class="k">elif</span> <span class="n">langcode</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;iso&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;639-2&#39;</span><span class="p">:</span>
+
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;lang&#39;</span><span class="p">][</span><span class="s1">&#39;iso3&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;010@&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">langcode</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()}]})</span>
+
+  <span class="c1">## Locations</span>
+
+  <span class="n">locations</span> <span class="o">=</span> <span class="n">formal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;locations&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">locations</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+
+    <span class="k">for</span> <span class="n">loc</span> <span class="ow">in</span> <span class="n">locations</span><span class="p">:</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;locations&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">loc_type</span> <span class="o">=</span> <span class="n">loc</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span>
+      <span class="n">loc_subtype</span> <span class="o">=</span> <span class="n">loc</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;subtype&#39;</span><span class="p">)</span>
+
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;locations&#39;</span><span class="p">][</span><span class="s1">&#39;types&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">loc_type</span><span class="p">)</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;locations&#39;</span><span class="p">][</span><span class="s1">&#39;subtypes&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">loc_subtype</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">loc_type</span> <span class="o">==</span> <span class="s1">&#39;url&#39;</span><span class="p">:</span>
+        <span class="n">url_text</span> <span class="o">=</span> <span class="n">loc</span><span class="o">.</span><span class="n">text</span>
+        <span class="n">url_found</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;009P/05&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">url_text</span><span class="p">}]})</span>
+
+        <span class="k">if</span> <span class="n">loc_subtype</span> <span class="o">==</span> <span class="s1">&#39;doi&#39;</span><span class="p">:</span>
+          <span class="n">doi</span> <span class="o">=</span> <span class="n">urlsplit</span><span class="p">(</span><span class="n">url_text</span><span class="p">)</span><span class="o">.</span><span class="n">path</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;004V&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="n">doi</span><span class="p">}]})</span>
+
+  <span class="c1"># Bibliographic Info</span>
+
+  <span class="n">bibliographic_info</span> <span class="o">=</span> <span class="n">document</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;bibliographicInfo&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;dependend&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;false&#39;</span><span class="p">:</span>
+    <span class="n">dependend</span> <span class="o">=</span> <span class="kc">False</span>
+
+  <span class="c1">## Title</span>
+
+  <span class="n">title</span> <span class="o">=</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:title&#39;</span><span class="p">,</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">title</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">clean_title</span> <span class="o">=</span> <span class="n">title</span><span class="o">.</span><span class="n">text</span>
+    <span class="n">tails</span> <span class="o">=</span> <span class="n">title</span><span class="o">.</span><span class="n">xpath</span><span class="p">(</span><span class="s1">&#39;child::*&#39;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">tails</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">tails</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+      <span class="n">clean_title</span> <span class="o">=</span> <span class="n">_process_tails</span><span class="p">(</span><span class="n">title</span><span class="p">)</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;title&#39;</span><span class="p">][</span><span class="s1">&#39;tags&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="k">if</span> <span class="n">clean_title</span><span class="p">:</span>
+      <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;021A&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">clean_title</span><span class="p">}]})</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;title&#39;</span><span class="p">][</span><span class="s1">&#39;lang&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">title</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">xml_lang</span><span class="p">)</span>
+
+    <span class="k">else</span><span class="p">:</span>
+      <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;No Title:&quot;</span><span class="p">)</span>
+      <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">doc_id</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+  <span class="c1">## Alternative Titles</span>
+
+  <span class="n">alt_titles</span> <span class="o">=</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;alternativeTitles&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">alt_titles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">alt</span> <span class="ow">in</span> <span class="n">alt_titles</span><span class="p">:</span>
+      <span class="n">alt_lang</span> <span class="o">=</span> <span class="n">alt</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">xml_lang</span><span class="p">)</span>
+      <span class="n">clean_alt</span> <span class="o">=</span> <span class="n">_process_tails</span><span class="p">(</span><span class="n">alt</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">alt_lang</span> <span class="ow">and</span> <span class="n">clean_alt</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;title&#39;</span><span class="p">][</span><span class="s1">&#39;alt&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">alt_lang</span><span class="p">)</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;021F&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">clean_alt</span><span class="p">}]})</span>
+
+  <span class="c1">## Abstracts</span>
+
+  <span class="n">abstracts</span> <span class="o">=</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;abstracts&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">abstracts</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">abstract</span> <span class="ow">in</span> <span class="n">abstracts</span><span class="p">:</span>
+      <span class="n">cleaned_abstract</span> <span class="o">=</span> <span class="n">abstract</span><span class="o">.</span><span class="n">text</span>
+      <span class="n">tails</span> <span class="o">=</span> <span class="n">abstract</span><span class="o">.</span><span class="n">xpath</span><span class="p">(</span><span class="s1">&#39;child::*&#39;</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">tails</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">tails</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;abstracts&#39;</span><span class="p">][</span><span class="s1">&#39;tags&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">cleaned_abstract</span> <span class="o">=</span> <span class="n">_process_tails</span><span class="p">(</span><span class="n">abstract</span><span class="p">)</span>
+
+      <span class="n">abs_lang</span> <span class="o">=</span> <span class="n">abstract</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">xml_lang</span><span class="p">)</span>
+
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;abstracts&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;abstracts&#39;</span><span class="p">][</span><span class="s1">&#39;lang&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">abs_lang</span><span class="p">)</span>
+
+      <span class="n">copyright</span> <span class="o">=</span> <span class="n">abstract</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;copyright&#39;</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">cleaned_abstract</span> <span class="ow">and</span> <span class="n">copyright</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">cleaned_abstract</span> <span class="o">+=</span> <span class="p">(</span><span class="s1">&#39; [&#39;</span> <span class="o">+</span> <span class="n">copyright</span> <span class="o">+</span> <span class="s1">&#39;]&#39;</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">cleaned_abstract</span><span class="p">:</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;020F&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">cleaned_abstract</span><span class="p">}]})</span>
+
+  <span class="c1">## Authors</span>
+
+  <span class="c1">### Affiliations</span>
+
+  <span class="n">aff_temp</span> <span class="o">=</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;authorsAffiliations&#39;</span><span class="p">)</span>
+  <span class="n">affiliations</span> <span class="o">=</span> <span class="p">[]</span>
+
+  <span class="k">if</span> <span class="n">aff_temp</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">aff</span> <span class="ow">in</span> <span class="n">aff_temp</span><span class="p">:</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;authors&#39;</span><span class="p">][</span><span class="s1">&#39;with_aff&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">affiliations</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">aff</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;affiliation&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+  <span class="c1">### Authors</span>
+
+  <span class="n">authors</span> <span class="o">=</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;creators&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">authors</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">author</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">authors</span><span class="p">):</span>
+      <span class="n">name</span> <span class="o">=</span> <span class="n">author</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:creator&#39;</span><span class="p">,</span> <span class="n">authors</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span>
+
+      <span class="k">if</span> <span class="n">name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;authors&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;, &quot;</span><span class="p">)</span>
+
+        <span class="n">author_fields</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+          <span class="n">author_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;d&#39;</span><span class="p">:</span> <span class="n">name</span><span class="p">[</span><span class="mi">1</span><span class="p">]})</span>
+
+        <span class="n">author_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">name</span><span class="p">[</span><span class="mi">0</span><span class="p">]})</span>
+
+        <span class="c1">#if aff_temp is not None and len(affiliations) &gt; index:</span>
+          <span class="c1">#author_fields.append({&#39;p&#39;: affiliations[index]})</span>
+
+        <span class="n">author_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;B&#39;</span><span class="p">:</span> <span class="s2">&quot;VerfasserIn&quot;</span><span class="p">})</span>
+        <span class="n">author_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;4&#39;</span><span class="p">:</span> <span class="s2">&quot;aut&quot;</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">index</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;028A&#39;</span><span class="p">:</span> <span class="n">author_fields</span><span class="p">})</span>
+
+        <span class="k">else</span><span class="p">:</span>
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;028C&#39;</span><span class="p">:</span> <span class="n">author_fields</span><span class="p">})</span>
+
+  <span class="c1">## Material Code</span>
+
+  <span class="n">material_code</span> <span class="o">=</span> <span class="n">_decide_material</span><span class="p">(</span><span class="n">dependend</span><span class="p">,</span> <span class="n">url_found</span><span class="p">,</span> <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;genres&#39;</span><span class="p">][</span><span class="s1">&#39;values&#39;</span><span class="p">])</span>
+
+  <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;002@&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="n">material_code</span><span class="p">}]})</span>
+
+  <span class="c1">## Additional Info</span>
+
+  <span class="n">additional_info</span> <span class="o">=</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;additionalDocumentInfo&#39;</span><span class="p">)</span>
+
+  <span class="n">article_info</span> <span class="o">=</span> <span class="n">additional_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;articleInfo&#39;</span><span class="p">)</span>
+  <span class="n">journal_info</span> <span class="o">=</span> <span class="n">additional_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;journalInfo&#39;</span><span class="p">)</span>
+
+  <span class="c1">### Conference Info</span>
+
+  <span class="n">conference_info</span> <span class="o">=</span> <span class="n">additional_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;conferenceInfos&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">conference_info</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">conferences</span> <span class="o">=</span> <span class="n">conference_info</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="s1">&#39;conferenceInfo&#39;</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">conf</span> <span class="ow">in</span> <span class="n">conferences</span><span class="p">:</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;conference&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">conf_date_parts</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="s2">&quot;&quot;</span><span class="p">]</span>
+
+      <span class="k">for</span> <span class="n">date</span> <span class="ow">in</span> <span class="n">conf</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="s1">&#39;dc:date&#39;</span><span class="p">,</span> <span class="n">conf</span><span class="o">.</span><span class="n">nsmap</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">date</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;begin&#39;</span><span class="p">:</span>
+          <span class="n">conf_date_parts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">date</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">,</span> <span class="s2">&quot;.&quot;</span><span class="p">)</span>
+
+        <span class="k">elif</span> <span class="n">date</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;end&#39;</span><span class="p">:</span>
+          <span class="n">conf_date_parts</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">date</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">,</span> <span class="s2">&quot;.&quot;</span><span class="p">)</span>
+
+      <span class="n">conf_date</span> <span class="o">=</span> <span class="s1">&#39;-&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">conf_date_parts</span><span class="p">)</span>
+      <span class="n">conf_place</span> <span class="o">=</span> <span class="n">conf</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;place&#39;</span><span class="p">)</span>
+      <span class="n">conf_names</span> <span class="o">=</span> <span class="n">conf</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">)</span>
+
+      <span class="k">for</span> <span class="n">conf_name</span> <span class="ow">in</span> <span class="n">conf_names</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">conf_name</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+          <span class="n">conf_field</span> <span class="o">=</span> <span class="p">[]</span>
+          <span class="n">conf_split</span> <span class="o">=</span> <span class="n">conf_name</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;, &#39;</span><span class="p">)</span>
+          <span class="n">conf_field</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">conf_split</span><span class="p">[</span><span class="mi">0</span><span class="p">]})</span>
+
+          <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">conf_split</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="n">conf_field</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;j&#39;</span><span class="p">:</span> <span class="n">conf_split</span><span class="p">[</span><span class="mi">1</span><span class="p">]})</span>
+
+          <span class="k">if</span> <span class="n">conf_place</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">conf_place</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">conf_field</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;k&#39;</span><span class="p">:</span> <span class="n">conf_place</span><span class="o">.</span><span class="n">text</span><span class="p">})</span>
+
+          <span class="k">if</span> <span class="ow">not</span> <span class="n">conf_date</span> <span class="o">==</span> <span class="s2">&quot;-&quot;</span><span class="p">:</span>
+            <span class="n">conf_field</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;p&#39;</span><span class="p">:</span> <span class="n">conf_date</span><span class="p">})</span>
+
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;030F&#39;</span><span class="p">:</span> <span class="n">conf_field</span><span class="p">})</span>
+
+
+  <span class="c1">## Publication Info</span>
+
+  <span class="n">publication_info</span> <span class="o">=</span> <span class="n">bibliographic_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;publicationInfo&#39;</span><span class="p">)</span>
+  <span class="n">publ_date</span> <span class="o">=</span> <span class="n">publication_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dcterms:Issued&#39;</span><span class="p">,</span> <span class="n">publication_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">journal_info</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">journal_title</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">journal_year</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">journal_vol</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">journal_iss</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+    <span class="k">if</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:title&#39;</span><span class="p">,</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:title&#39;</span><span class="p">,</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">journal_title</span> <span class="o">=</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:title&#39;</span><span class="p">,</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span><span class="o">.</span><span class="n">text</span>
+
+    <span class="k">elif</span> <span class="n">article_info</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">article_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:title&#39;</span><span class="p">,</span> <span class="n">article_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">article_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:title&#39;</span><span class="p">,</span> <span class="n">article_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">journal_title</span> <span class="o">=</span> <span class="n">article_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:title&#39;</span><span class="p">,</span> <span class="n">article_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span><span class="o">.</span><span class="n">text</span>
+
+    <span class="k">if</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;volumeNumber&#39;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;volumeNumber&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">journal_vol</span> <span class="o">=</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;volumeNumber&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span>
+
+    <span class="k">if</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;issueNumber&#39;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;issueNumber&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">journal_iss</span> <span class="o">=</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;issueNumber&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span>
+
+    <span class="k">if</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;coverDate&#39;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;coverDate&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">journal_date</span> <span class="o">=</span> <span class="n">journal_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;coverDate&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">dependend</span><span class="p">:</span>
+      <span class="k">if</span> <span class="n">journal_title</span><span class="p">:</span>
+        <span class="n">series_fields</span> <span class="o">=</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">journal_title</span><span class="p">}]</span>
+
+        <span class="k">if</span> <span class="n">journal_vol</span><span class="p">:</span>
+          <span class="n">series_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;l&#39;</span><span class="p">:</span> <span class="n">journal_vol</span><span class="p">})</span>
+
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;036E&#39;</span><span class="p">:</span> <span class="n">series_fields</span><span class="p">})</span>
+
+      <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">isbn10</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">isbn13</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">isbn_pairs</span> <span class="o">=</span> <span class="n">_match_isbns</span><span class="p">(</span><span class="n">isbn10</span><span class="p">,</span> <span class="n">isbn13</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">pair</span> <span class="ow">in</span> <span class="n">isbn_pairs</span><span class="p">:</span>
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pair</span><span class="p">)</span>
+
+      <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="n">isbn13</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">isbn</span> <span class="ow">in</span> <span class="n">isbn13</span><span class="p">:</span>
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;004A&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;A&#39;</span><span class="p">:</span> <span class="n">isbn</span><span class="p">}]})</span>
+
+      <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="n">isbn10</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">isbn</span> <span class="ow">in</span> <span class="n">isbn10</span><span class="p">:</span>
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;004A&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="n">isbn</span><span class="p">}]})</span>
+
+    <span class="k">elif</span> <span class="n">dependend</span><span class="p">:</span>
+      <span class="k">if</span> <span class="n">journal_title</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">pages</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">article_info</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+          <span class="k">if</span> <span class="n">article_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;pages&#39;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">article_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;pages&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">splitpages</span> <span class="o">=</span> <span class="n">article_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;pages&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">splitpages</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+              <span class="n">pages</span> <span class="o">=</span> <span class="n">article_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;pages&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span>
+
+            <span class="k">else</span><span class="p">:</span>
+              <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;pages&#39;</span><span class="p">][</span><span class="s1">&#39;error&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="n">precise_infos</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">journal_fields</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">greater_fields</span> <span class="o">=</span> <span class="p">[{</span><span class="s1">&#39;c&#39;</span><span class="p">:</span> <span class="s2">&quot;In&quot;</span><span class="p">}]</span>
+
+        <span class="k">if</span> <span class="n">journal_title</span><span class="p">:</span>
+          <span class="n">journal_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">journal_title</span><span class="p">})</span>
+          <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">journal_title</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">journal_vol</span><span class="p">:</span>
+          <span class="n">precise_infos</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;d&#39;</span><span class="p">:</span> <span class="n">journal_vol</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">journal_year</span><span class="p">:</span>
+          <span class="n">precise_infos</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;j&#39;</span><span class="p">:</span> <span class="n">journal_year</span><span class="p">})</span>
+
+        <span class="k">else</span><span class="p">:</span>
+          <span class="n">precise_infos</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;j&#39;</span><span class="p">:</span> <span class="n">publ_date</span><span class="o">.</span><span class="n">text</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">journal_iss</span><span class="p">:</span>
+          <span class="n">precise_infos</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;e&#39;</span><span class="p">:</span> <span class="n">journal_iss</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">pages</span><span class="p">:</span>
+          <span class="n">precise_infos</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;h&#39;</span><span class="p">:</span> <span class="n">pages</span><span class="p">})</span>
+
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;031A&#39;</span><span class="p">:</span> <span class="n">precise_infos</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">journal</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+          <span class="k">if</span> <span class="n">material_code</span> <span class="o">==</span> <span class="s1">&#39;Osx&#39;</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">eissn</span><span class="p">:</span>
+              <span class="n">journal_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="n">i</span><span class="p">})</span>
+              <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;C&#39;</span><span class="p">:</span> <span class="s2">&quot;ISS&quot;</span><span class="p">})</span>
+              <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;6&#39;</span><span class="p">:</span> <span class="n">i</span><span class="p">})</span>
+
+          <span class="k">elif</span> <span class="n">material_code</span> <span class="o">==</span> <span class="s1">&#39;Asx&#39;</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">issn</span><span class="p">:</span>
+              <span class="n">journal_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="n">i</span><span class="p">})</span>
+              <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;C&#39;</span><span class="p">:</span> <span class="s2">&quot;ISS&quot;</span><span class="p">})</span>
+              <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;6&#39;</span><span class="p">:</span> <span class="n">i</span><span class="p">})</span>
+
+        <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="n">isbn13</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+          <span class="k">for</span> <span class="n">isbn</span> <span class="ow">in</span> <span class="n">isbn13</span><span class="p">:</span>
+            <span class="n">journal_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;i&#39;</span><span class="p">:</span> <span class="n">isbn</span><span class="p">})</span>
+            <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;C&#39;</span><span class="p">:</span> <span class="s2">&quot;ISB&quot;</span><span class="p">})</span>
+            <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;6&#39;</span><span class="p">:</span> <span class="n">isbn</span><span class="p">})</span>
+
+        <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="n">isbn10</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+          <span class="k">for</span> <span class="n">isbn</span> <span class="ow">in</span> <span class="n">isbn10</span><span class="p">:</span>
+            <span class="n">journal_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;i&#39;</span><span class="p">:</span> <span class="n">isbn</span><span class="p">})</span>
+            <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;C&#39;</span><span class="p">:</span> <span class="s2">&quot;ISB&quot;</span><span class="p">})</span>
+            <span class="n">greater_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;6&#39;</span><span class="p">:</span> <span class="n">isbn</span><span class="p">})</span>
+
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;027D&#39;</span><span class="p">:</span> <span class="n">journal_fields</span><span class="p">})</span>
+
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;039B&#39;</span><span class="p">:</span> <span class="n">greater_fields</span><span class="p">})</span>
+
+  <span class="c1">### Publisher</span>
+
+  <span class="n">publisher</span> <span class="o">=</span> <span class="n">publication_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;dc:publisher&#39;</span><span class="p">,</span> <span class="n">publication_info</span><span class="o">.</span><span class="n">nsmap</span><span class="p">)</span>
+  <span class="n">publ_place</span> <span class="o">=</span> <span class="n">publication_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;publicationPlace&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">publisher</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">publisher</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;publisher&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="n">publ_fields</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">if</span> <span class="n">publ_place</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">publ_place</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;publisher&#39;</span><span class="p">][</span><span class="s1">&#39;place&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">publ_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;p&#39;</span><span class="p">:</span> <span class="n">publ_place</span><span class="o">.</span><span class="n">text</span><span class="p">})</span>
+
+    <span class="n">publ_fields</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;n&#39;</span><span class="p">:</span> <span class="n">publisher</span><span class="o">.</span><span class="n">text</span><span class="p">})</span>
+    <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;033A&#39;</span><span class="p">:</span> <span class="n">publ_fields</span><span class="p">})</span>
+
+  <span class="k">if</span> <span class="n">publ_date</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;date&#39;</span><span class="p">][</span><span class="s1">&#39;values&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">publ_date</span><span class="o">.</span><span class="n">text</span>
+    <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;011@&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">publ_date</span><span class="o">.</span><span class="n">text</span><span class="p">}]})</span>
+
+  <span class="c1"># Classification Info</span>
+
+  <span class="n">classification_info</span> <span class="o">=</span> <span class="n">document</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;classificationInfo&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">classification_info</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">classifications</span> <span class="o">=</span> <span class="n">classification_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;classifications&#39;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">classifications</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">classifications</span><span class="p">:</span>
+        <span class="n">c_name</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;classificationName&#39;</span><span class="p">)</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;classifications&#39;</span><span class="p">][</span><span class="s1">&#39;types&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">c_name</span><span class="p">)</span>
+        <span class="n">nots</span> <span class="o">=</span> <span class="p">[{</span><span class="s1">&#39;b&#39;</span><span class="p">:</span> <span class="n">c_name</span><span class="p">}]</span>
+
+        <span class="k">for</span> <span class="n">cl</span> <span class="ow">in</span> <span class="n">c</span><span class="p">:</span>
+          <span class="n">nots</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">cl</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;code&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span><span class="p">})</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;045X&#39;</span><span class="p">:</span> <span class="n">nots</span><span class="p">})</span>
+
+    <span class="n">subjects</span> <span class="o">=</span> <span class="n">classification_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;subjects&#39;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">subjects</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">for</span> <span class="n">sub</span> <span class="ow">in</span> <span class="n">subjects</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">sub</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+          <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;subjects&#39;</span><span class="p">][</span><span class="s1">&#39;values&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sub</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+          <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;044L/00&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;S&#39;</span><span class="p">:</span> <span class="s1">&#39;s&#39;</span><span class="p">},{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">sub</span><span class="o">.</span><span class="n">text</span><span class="p">}]})</span>
+
+  <span class="c1"># Functional Info</span>
+
+  <span class="n">functional_info</span> <span class="o">=</span> <span class="n">document</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;functionalInfo&#39;</span><span class="p">)</span>
+  <span class="n">thesaurus</span> <span class="o">=</span> <span class="n">functional_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;thesaurusTerms&#39;</span><span class="p">)</span>
+
+  <span class="c1">## Thesaurus</span>
+
+  <span class="k">if</span> <span class="n">thesaurus</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">temp_synonyms</span> <span class="o">=</span> <span class="n">thesaurus</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;synonyms&#39;</span><span class="p">)</span>
+    <span class="n">synonyms</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">syn_group</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">if</span> <span class="n">temp_synonyms</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">syn</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">temp_synonyms</span><span class="p">):</span>
+        <span class="n">syn_type</span> <span class="o">=</span> <span class="n">syn</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span>
+        <span class="n">syn_lang</span> <span class="o">=</span> <span class="n">syn</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">xml_lang</span><span class="p">)</span>
+        <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;thesaurus&#39;</span><span class="p">][</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="k">if</span> <span class="n">index</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+          <span class="n">syn_group</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;S&#39;</span><span class="p">:</span> <span class="s2">&quot;s&quot;</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">syn_type</span> <span class="o">==</span> <span class="s1">&#39;DES&#39;</span> <span class="ow">or</span> <span class="n">syn_type</span> <span class="o">==</span> <span class="s1">&#39;SYN&#39;</span><span class="p">:</span>
+          <span class="n">stats</span><span class="p">[</span><span class="s1">&#39;thesaurus&#39;</span><span class="p">][</span><span class="s1">&#39;des&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">syn</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+          <span class="k">if</span> <span class="n">index</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="p">(</span> <span class="n">temp_synonyms</span><span class="p">[</span><span class="n">index</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;SUP&#39;</span> <span class="ow">or</span> <span class="p">(</span> <span class="n">syn_lang</span> <span class="o">==</span> <span class="s1">&#39;DE&#39;</span> <span class="ow">and</span> <span class="n">temp_synonyms</span><span class="p">[</span><span class="n">index</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">xml_lang</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;EN&#39;</span><span class="p">)</span> <span class="p">):</span>
+            <span class="n">synonyms</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">syn_group</span><span class="p">)</span>
+            <span class="n">syn_group</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">syn_group</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;S&#39;</span><span class="p">:</span> <span class="s2">&quot;s&quot;</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">syn_lang</span> <span class="o">==</span> <span class="s1">&#39;DE&#39;</span><span class="p">:</span>
+          <span class="n">syn_group</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">syn</span><span class="o">.</span><span class="n">text</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">index</span> <span class="o">==</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">temp_synonyms</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+          <span class="n">synonyms</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">syn_group</span><span class="p">)</span>
+
+      <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">synonyms</span><span class="p">:</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;044N&#39;</span><span class="p">:</span> <span class="n">group</span><span class="p">})</span>
+
+  <span class="c1">## Free Terms</span>
+
+  <span class="n">free_terms</span> <span class="o">=</span> <span class="n">functional_info</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;freeTerms&#39;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">free_terms</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">ft</span> <span class="ow">in</span> <span class="n">free_terms</span><span class="p">:</span>
+      <span class="k">if</span> <span class="n">ft</span><span class="o">.</span><span class="n">text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;044L/01&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s1">&#39;S&#39;</span><span class="p">:</span> <span class="s2">&quot;s&quot;</span><span class="p">},</span> <span class="p">{</span><span class="s1">&#39;a&#39;</span><span class="p">:</span> <span class="n">ft</span><span class="o">.</span><span class="n">text</span><span class="p">}]})</span>
+
+  <span class="k">return</span> <span class="p">[</span><span class="n">record</span><span class="p">,</span> <span class="n">stats</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="write_to_file"><a class="viewcode-back" href="../wti_convert.html#wti_convert.write_to_file">[Doku]</a><span class="k">def</span> <span class="nf">write_to_file</span><span class="p">(</span><span class="n">record</span><span class="p">,</span> <span class="n">num_record</span><span class="p">,</span> <span class="n">fpath</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Diese Funktion liest eine Liste von PICA-Feldern und schreibt diese im PICA-Internformat in eine Datei.</span>
+
+<span class="sd">  Struktur eines `records`::</span>
+
+<span class="sd">    [</span>
+<span class="sd">      {</span>
+<span class="sd">        &#39;031N&#39;: [</span>
+<span class="sd">          {&#39;d&#39;: &quot;15&quot;},</span>
+<span class="sd">          {&#39;j&#39;:&quot;2004&quot;}</span>
+<span class="sd">        ]</span>
+<span class="sd">      },</span>
+<span class="sd">      {</span>
+<span class="sd">        &#39;002@&#39;: [</span>
+<span class="sd">          {&#39;0&#39;: &quot;Osx&quot;}</span>
+<span class="sd">        ]</span>
+<span class="sd">      }</span>
+<span class="sd">    ]</span>
+
+<span class="sd">  :param record: die Liste mit PICA-Feldern</span>
+<span class="sd">  :type record: list</span>
+<span class="sd">  :param num_record: die laufende Titelanzahl in der aktuellen Datei</span>
+<span class="sd">  :type num_record: int</span>
+<span class="sd">  :param fpath: der Dateiname inklusive Pfad</span>
+<span class="sd">  :type fpath: str</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+  <span class="n">record</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">record</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">keys</span><span class="p">())[</span><span class="mi">0</span><span class="p">])</span>
+
+  <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">fpath</span><span class="p">,</span> <span class="s1">&#39;a+&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;&lt;1D&gt;&#39;</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;##TitleSequenceNumber &#39;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">num_record</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="n">record</span><span class="p">:</span>
+      <span class="n">field_name</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">keys</span><span class="p">())[</span><span class="mi">0</span><span class="p">]</span>
+      <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;&lt;1E&gt;&#39;</span><span class="p">)</span>
+      <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">field_name</span> <span class="o">+</span> <span class="s2">&quot; &quot;</span><span class="p">)</span>
+
+      <span class="k">for</span> <span class="n">subfield</span> <span class="ow">in</span> <span class="n">field</span><span class="p">[</span><span class="n">field_name</span><span class="p">]:</span>
+        <span class="n">subfield_name</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">subfield</span><span class="o">.</span><span class="n">keys</span><span class="p">())[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;&lt;1F&gt;&#39;</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">subfield_name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">subfield_name</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">str</span> <span class="ow">and</span> <span class="n">subfield</span><span class="p">[</span><span class="n">subfield_name</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+          <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">subfield</span><span class="p">[</span><span class="n">subfield_name</span><span class="p">])</span> <span class="ow">is</span> <span class="nb">str</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">subfield</span><span class="p">[</span><span class="n">subfield_name</span><span class="p">])</span>
+
+          <span class="k">else</span><span class="p">:</span>
+            <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">field_name</span><span class="p">)</span>
+            <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">subfield_name</span><span class="p">)</span>
+            <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">subfield</span><span class="p">)</span>
+
+        <span class="k">else</span><span class="p">:</span>
+          <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">field_name</span><span class="p">)</span>
+          <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">subfield_name</span><span class="p">)</span>
+          <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">subfield</span><span class="p">)</span>
+
+      <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="_max_val"><a class="viewcode-back" href="../wti_convert.html#wti_convert._max_val">[Doku]</a><span class="k">def</span> <span class="nf">_max_val</span><span class="p">(</span><span class="n">d</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Bestimmt den Maximalwert in einem Dictionary und gibt in mit dem dazugehörigen Key zurück.</span>
+<span class="sd">  </span>
+<span class="sd">  :param d: Das zu untersuchende Python-Dictionary</span>
+<span class="sd">  :type d: dict</span>
+<span class="sd">  :returns: list</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+
+  <span class="n">v</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+  <span class="n">k</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+  <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">k</span><span class="p">[</span><span class="n">v</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">v</span><span class="p">))],</span> <span class="nb">max</span><span class="p">(</span><span class="n">v</span><span class="p">)]</span>
+
+  <span class="k">else</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">[</span><span class="kc">None</span><span class="p">,</span><span class="kc">None</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="_min_val"><a class="viewcode-back" href="../wti_convert.html#wti_convert._min_val">[Doku]</a><span class="k">def</span> <span class="nf">_min_val</span><span class="p">(</span><span class="n">d</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Bestimmt den Minimalwert in einem Dictionary und gibt in mit dem dazugehörigen Key zurück.</span>
+<span class="sd">  </span>
+<span class="sd">  :param d: Das zu untersuchende Python-Dictionary</span>
+<span class="sd">  :type d: dict</span>
+<span class="sd">  :returns: list</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+
+  <span class="n">v</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+  <span class="n">k</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+  <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">k</span><span class="p">[</span><span class="n">v</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="n">v</span><span class="p">))],</span> <span class="nb">min</span><span class="p">(</span><span class="n">v</span><span class="p">)]</span>
+
+  <span class="k">else</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">[</span><span class="kc">None</span><span class="p">,</span><span class="kc">None</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="prepare_stats"><a class="viewcode-back" href="../wti_convert.html#wti_convert.prepare_stats">[Doku]</a><span class="k">def</span> <span class="nf">prepare_stats</span><span class="p">(</span><span class="n">stats</span><span class="p">,</span> <span class="n">stats_path</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Diese Funktion erzeugt CSV-Dateien für die Inhalte eines Dictionaries mit Statistiken.</span>
+
+<span class="sd">  Struktur der `stats`::</span>
+
+<span class="sd">    {</span>
+<span class="sd">      &#39;lang&#39;:{</span>
+<span class="sd">        &#39;num&#39;:{&#39;1&#39;: 20, &#39;0&#39;: 50, &#39;2&#39;: 10},</span>
+<span class="sd">        &#39;names&#39;:{&#39;de&#39;: 30, &#39;en&#39;: 10}</span>
+<span class="sd">      },</span>
+<span class="sd">      &#39;genres&#39;:{</span>
+<span class="sd">        &#39;values&#39;:{&#39;J&#39;: 300, &#39;CA&#39;: 80, &#39;B&#39;: 10}</span>
+<span class="sd">      }</span>
+<span class="sd">    }</span>
+
+<span class="sd">  :param stats: Die übergebenen Statistiken</span>
+<span class="sd">  :type stats: dict.</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+  
+  <span class="n">statsSubf</span> <span class="o">=</span> <span class="n">current_date</span> <span class="o">+</span> <span class="s1">&#39;/&#39;</span>
+  <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">stats_path</span> <span class="o">+</span> <span class="n">statsSubf</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+  
+  <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">stats_path</span> <span class="o">+</span> <span class="n">statsSubf</span> <span class="o">+</span> <span class="s2">&quot;topic_stats.csv&quot;</span><span class="p">,</span> <span class="s1">&#39;w+&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">sf</span><span class="p">:</span>
+    <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;name,num_keys,max_key,max_occ,max_occ_key,min_key,min_occ,min_occ_key,mean</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">topic</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">stats</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+      <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">sub_topic</span><span class="p">,</span> <span class="n">sval</span> <span class="ow">in</span> <span class="n">value</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+          <span class="n">row_name</span> <span class="o">=</span> <span class="n">topic</span> <span class="o">+</span> <span class="s2">&quot;_&quot;</span> <span class="o">+</span> <span class="n">sub_topic</span>
+
+          <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">sval</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">dict</span><span class="p">:</span>
+            <span class="n">max_key</span><span class="p">,</span> <span class="n">max_val</span> <span class="o">=</span> <span class="n">_max_val</span><span class="p">(</span><span class="n">sval</span><span class="p">)</span>
+            <span class="n">min_key</span><span class="p">,</span> <span class="n">min_val</span> <span class="o">=</span> <span class="n">_min_val</span><span class="p">(</span><span class="n">sval</span><span class="p">)</span>
+            <span class="n">vals</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">sval</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+            <span class="n">keys</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">sval</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+            <span class="n">int_keys</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">num_zero</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">is_string</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="n">kv_list</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">mean</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">stats_path</span> <span class="o">+</span> <span class="n">statsSubf</span> <span class="o">+</span> <span class="n">row_name</span> <span class="o">+</span> <span class="s2">&quot;.csv&quot;</span><span class="p">,</span> <span class="s1">&#39;w+&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">subfield_stats</span><span class="p">:</span>
+              <span class="n">subfield_stats</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;value,num</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+              <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">sval</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">k</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                  <span class="n">kv_list</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="p">})</span>
+
+                <span class="k">if</span> <span class="n">k</span> <span class="o">==</span> <span class="s2">&quot;0&quot;</span><span class="p">:</span>
+                  <span class="n">num_zero</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+
+              <span class="n">kv_list</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">kv_list</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">values</span><span class="p">())[</span><span class="mi">0</span><span class="p">],</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+              <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">kv_list</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">:</span>
+                <span class="n">kv_list</span> <span class="o">=</span> <span class="n">kv_list</span><span class="p">[:</span><span class="mi">10</span><span class="p">]</span>
+
+              <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">kv_list</span><span class="p">:</span>
+                <span class="n">sf_keys</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">item</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+                <span class="n">sf_values</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">item</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+                <span class="n">subfield_stats</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">sf_keys</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;,&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">sf_values</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">vals</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+              <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                  <span class="n">int_keys</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">k</span><span class="p">))</span>
+
+                <span class="k">except</span><span class="p">:</span>
+                  <span class="n">is_string</span> <span class="o">=</span> <span class="mi">1</span>
+
+              <span class="k">if</span> <span class="n">is_string</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">sorted_keys</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">([</span><span class="nb">int</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">int_keys</span><span class="p">])</span>
+
+                <span class="n">summage</span> <span class="o">=</span> <span class="mi">0</span>
+
+                <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">sval</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                  <span class="n">summage</span> <span class="o">+=</span> <span class="nb">int</span><span class="p">(</span><span class="n">k</span><span class="p">)</span><span class="o">*</span><span class="n">v</span>
+
+                <span class="n">mean</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">summage</span><span class="o">/</span><span class="n">stats</span><span class="p">[</span><span class="s1">&#39;num&#39;</span><span class="p">],</span> <span class="mi">2</span><span class="p">)</span>
+
+                <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">row_name</span> <span class="o">+</span> <span class="s2">&quot;,&quot;</span><span class="p">)</span>
+                <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">keys</span><span class="p">))</span> <span class="o">+</span> <span class="s2">&quot;,&quot;</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">max_key</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                  <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">sorted_keys</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span> <span class="o">+</span> <span class="s2">&quot;,&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">max_val</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;,&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">max_key</span><span class="p">))</span>
+
+                <span class="k">else</span><span class="p">:</span>
+                  <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>
+
+                <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">min_key</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                  <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">sorted_keys</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">+</span> <span class="s2">&quot;,&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">min_val</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;,&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">min_key</span><span class="p">))</span>
+
+                <span class="k">else</span><span class="p">:</span>
+                  <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>
+
+                <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">num_zero</span><span class="p">:</span>
+                  <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">num_zero</span><span class="p">)</span>
+
+                <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">mean</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+                  <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">mean</span><span class="p">))</span>
+
+                <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+          <span class="k">else</span><span class="p">:</span>
+            <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Skipped subtopic &quot;</span> <span class="o">+</span> <span class="n">sub_topic</span> <span class="o">+</span> <span class="s2">&quot; of &quot;</span> <span class="o">+</span> <span class="n">topic</span> <span class="o">+</span> <span class="s2">&quot;!&quot;</span><span class="p">)</span>
+      <span class="k">elif</span> <span class="n">topic</span> <span class="o">!=</span> <span class="s1">&#39;num&#39;</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Skipped topic &quot;</span> <span class="o">+</span> <span class="n">topic</span> <span class="o">+</span> <span class="s2">&quot;!&quot;</span><span class="p">)</span></div>
+
+
+<span class="c1"># Handle XML files</span>
+
+<div class="viewcode-block" id="handle_xml"><a class="viewcode-back" href="../wti_convert.html#wti_convert.handle_xml">[Doku]</a><span class="k">def</span> <span class="nf">handle_xml</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">xml_filename</span><span class="p">,</span> <span class="n">num_files</span><span class="p">,</span> <span class="n">stats_only</span><span class="p">,</span> <span class="n">is_update</span><span class="p">,</span> <span class="n">out_path</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Parst die XML-Dateien und kumuliert deren Statistiken.</span>
+
+<span class="sd">  :param xml_path: Der Pfad zu den XML-Dateien</span>
+<span class="sd">  :type xml_path: str</span>
+<span class="sd">  :param xml_filename: Ein eventuell gegebener spezifischer Dateiname in dem Verzeichnis</span>
+<span class="sd">  :type xml_filename: str</span>
+<span class="sd">  :param num_files: Die Gesamtanzahl an XML-Dateien in dem Verzeichnis</span>
+<span class="sd">  :type num_files: int</span>
+<span class="sd">  :param stats_only: Eine Flag, ob die Ergebnisse mit `write_to_file()` geschrieben werden sollen</span>
+<span class="sd">  :type stats_only: bool</span>
+<span class="sd">  :param is_update: Eine Flag, ob die Ergebnisse in ein mit dem Datum benannten Unterverzeichnis gespeichert werden sollen</span>
+<span class="sd">  :type stats_only: bool</span>
+<span class="sd">  :param out_path: Ein manuell angegebener Output-Pfad</span>
+<span class="sd">  :type out_path: str</span>
+<span class="sd">  :returns: list</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+
+  <span class="n">all_stats</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;num&#39;</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="p">}</span>
+  <span class="n">num_warn</span> <span class="o">=</span> <span class="mi">0</span>
+  <span class="n">cur_file</span> <span class="o">=</span> <span class="mi">0</span>
+
+  <span class="k">for</span> <span class="n">file</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="n">xml_path</span><span class="p">):</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="n">xml_filename</span> <span class="ow">and</span> <span class="n">file</span><span class="o">.</span><span class="n">endswith</span><span class="p">((</span><span class="s2">&quot;.xml&quot;</span><span class="p">,</span><span class="s2">&quot;.XML&quot;</span><span class="p">,</span><span class="s2">&quot;XML.gz&quot;</span><span class="p">)))</span> <span class="ow">or</span> <span class="p">(</span><span class="n">xml_filename</span> <span class="ow">and</span> <span class="n">file</span> <span class="o">==</span> <span class="n">xml_filename</span><span class="p">):</span>
+
+      <span class="n">nzfile</span> <span class="o">=</span> <span class="kc">None</span>
+      <span class="n">no_gz_ext</span> <span class="o">=</span> <span class="kc">None</span>
+
+      <span class="k">if</span> <span class="n">file</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;XML.gz&quot;</span><span class="p">):</span>
+
+        <span class="n">zfile</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">file</span><span class="p">)</span>
+        <span class="n">no_gz_ext</span> <span class="o">=</span> <span class="n">file</span><span class="p">[:</span><span class="n">file</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)]</span>
+        <span class="n">nzfile</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">no_gz_ext</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">nzfile</span><span class="p">):</span>
+          <span class="k">with</span> <span class="n">gzip</span><span class="o">.</span><span class="n">GzipFile</span><span class="p">(</span><span class="n">zfile</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">inF</span><span class="p">:</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">nzfile</span><span class="p">,</span> <span class="s1">&#39;wb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">outF</span><span class="p">:</span>
+              <span class="n">s</span> <span class="o">=</span> <span class="n">inF</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+              <span class="n">outF</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+          <span class="k">continue</span>
+
+      <span class="k">else</span><span class="p">:</span>
+        <span class="n">nzfile</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">file</span><span class="p">)</span>
+        <span class="n">no_gz_ext</span> <span class="o">=</span> <span class="n">file</span>
+
+      <span class="n">cur_file</span> <span class="o">+=</span> <span class="mi">1</span>
+      <span class="n">no_ext</span> <span class="o">=</span> <span class="n">no_gz_ext</span><span class="p">[:</span><span class="n">no_gz_ext</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)]</span>
+
+      <span class="n">base_path</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">OUTPUT_PATH</span>
+
+      <span class="k">if</span> <span class="n">out_path</span><span class="p">:</span>
+        <span class="n">base_path</span> <span class="o">=</span> <span class="n">out_path</span>
+
+
+      <span class="k">if</span> <span class="n">is_update</span><span class="p">:</span>
+        <span class="n">datePath</span> <span class="o">=</span> <span class="s1">&#39;upd_&#39;</span> <span class="o">+</span> <span class="n">current_date</span> <span class="o">+</span><span class="s1">&#39;/&#39;</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">base_path</span> <span class="o">+</span> <span class="n">datePath</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">base_path</span> <span class="o">=</span> <span class="n">base_path</span> <span class="o">+</span> <span class="n">datePath</span>
+
+      <span class="n">ext_fname</span> <span class="o">=</span> <span class="n">no_ext</span> <span class="o">+</span> <span class="s2">&quot;_&quot;</span> <span class="o">+</span> <span class="n">Constants</span><span class="o">.</span><span class="n">OUTPUT_FNAME</span>
+      <span class="n">ext_path</span> <span class="o">=</span> <span class="n">base_path</span> <span class="o">+</span> <span class="n">no_ext</span> <span class="o">+</span> <span class="s2">&quot;/&quot;</span>
+      <span class="n">combined</span> <span class="o">=</span> <span class="n">ext_path</span> <span class="o">+</span> <span class="n">ext_fname</span>
+
+      <span class="k">if</span> <span class="n">xml_filename</span><span class="p">:</span>
+        <span class="n">num_files</span> <span class="o">=</span> <span class="mi">1</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">stats_only</span><span class="p">:</span>
+          <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">ext_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+          <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">combined</span><span class="p">):</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">combined</span><span class="p">,</span> <span class="n">combined</span> <span class="o">+</span> <span class="s2">&quot;.prev&quot;</span><span class="p">)</span>
+
+      <span class="k">else</span><span class="p">:</span>
+        <span class="n">combined</span> <span class="o">=</span> <span class="n">base_path</span> <span class="o">+</span> <span class="n">ext_fname</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">stats_only</span><span class="p">:</span>
+          <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">combined</span><span class="p">):</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">combined</span><span class="p">,</span> <span class="n">combined</span> <span class="o">+</span> <span class="s2">&quot;.prev&quot;</span><span class="p">)</span>
+
+      <span class="n">docs_in_file</span> <span class="o">=</span> <span class="mi">0</span>
+
+      <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;processing: &quot;</span> <span class="o">+</span> <span class="n">nzfile</span> <span class="o">+</span> <span class="s2">&quot; (&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">cur_file</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;/&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">num_files</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;)&quot;</span><span class="p">)</span>
+
+      <span class="k">try</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">event</span><span class="p">,</span> <span class="n">document</span> <span class="ow">in</span> <span class="n">etree</span><span class="o">.</span><span class="n">iterparse</span><span class="p">(</span><span class="n">nzfile</span><span class="p">,</span> <span class="n">load_dtd</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">no_network</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="s2">&quot;document&quot;</span><span class="p">):</span>
+          <span class="n">record</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">process_document</span><span class="p">(</span><span class="n">document</span><span class="p">)</span>
+          <span class="n">docs_in_file</span> <span class="o">+=</span> <span class="mi">1</span>
+          <span class="n">all_stats</span><span class="p">[</span><span class="s1">&#39;num&#39;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+          <span class="k">for</span> <span class="n">topic</span><span class="p">,</span> <span class="n">values</span> <span class="ow">in</span> <span class="n">stats</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">values</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">dict</span><span class="p">:</span>
+              <span class="k">if</span> <span class="n">topic</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">all_stats</span><span class="p">:</span>
+                <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+              <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="n">values</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">]:</span>
+                  <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+                <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">val</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">:</span>
+                  <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">val</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">v</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">]:</span>
+                      <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">][</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+
+                    <span class="k">else</span><span class="p">:</span>
+                      <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">][</span><span class="n">v</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                <span class="k">elif</span> <span class="nb">type</span><span class="p">(</span><span class="n">val</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">int</span><span class="p">:</span>
+                  <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">val</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">]:</span>
+                    <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">][</span><span class="nb">str</span><span class="p">(</span><span class="n">val</span><span class="p">)]</span> <span class="o">=</span> <span class="mi">1</span>
+
+                  <span class="k">else</span><span class="p">:</span>
+                    <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">][</span><span class="nb">str</span><span class="p">(</span><span class="n">val</span><span class="p">)]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                <span class="k">elif</span> <span class="nb">type</span><span class="p">(</span><span class="n">val</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">str</span><span class="p">:</span>
+                  <span class="k">if</span> <span class="n">val</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">]:</span>
+                    <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">][</span><span class="n">val</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+
+                  <span class="k">else</span><span class="p">:</span>
+                    <span class="n">all_stats</span><span class="p">[</span><span class="n">topic</span><span class="p">][</span><span class="n">k</span><span class="p">][</span><span class="n">val</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                <span class="k">else</span><span class="p">:</span>
+                  <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Could not process stats for &quot;</span> <span class="o">+</span> <span class="n">topic</span> <span class="o">+</span> <span class="s2">&quot; -&gt; &quot;</span> <span class="o">+</span> <span class="n">k</span><span class="p">)</span>
+
+            <span class="k">else</span><span class="p">:</span>
+              <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Problem identifying stats for &quot;</span> <span class="o">+</span> <span class="n">topic</span><span class="p">)</span>
+
+          <span class="k">if</span> <span class="ow">not</span> <span class="n">stats_only</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+              <span class="n">write_to_file</span><span class="p">(</span><span class="n">record</span><span class="p">,</span> <span class="n">docs_in_file</span><span class="p">,</span> <span class="n">combined</span><span class="p">)</span>
+
+            <span class="k">except</span><span class="p">:</span>
+              <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Problem writing to file.&quot;</span><span class="p">)</span>
+              <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">exc_info</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span>
+
+          <span class="n">document</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+        <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Processed &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">docs_in_file</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; documents in file &quot;</span> <span class="o">+</span> <span class="n">file</span> <span class="o">+</span> <span class="s2">&quot;!&quot;</span><span class="p">)</span>
+
+      <span class="k">except</span> <span class="n">etree</span><span class="o">.</span><span class="n">XMLSyntaxError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">num_warn</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Error while parsing: &quot;</span> <span class="o">+</span> <span class="n">no_ext</span><span class="p">)</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+
+      <span class="k">except</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Unexpected error in &quot;</span> <span class="o">+</span> <span class="n">no_ext</span> <span class="o">+</span> <span class="s2">&quot;: &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">exc_info</span><span class="p">()[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="k">raise</span>
+        <span class="k">pass</span>
+
+      <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">nzfile</span><span class="p">)</span> <span class="ow">and</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">nzfile</span> <span class="o">+</span> <span class="s2">&quot;.gz&quot;</span><span class="p">):</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">nzfile</span><span class="p">)</span>
+
+  <span class="k">return</span> <span class="p">[</span><span class="n">all_stats</span><span class="p">,</span> <span class="n">num_warn</span><span class="p">,</span> <span class="n">cur_file</span><span class="p">]</span></div>
+
+<span class="c1"># MAIN</span>
+
+<div class="viewcode-block" id="main"><a class="viewcode-back" href="../wti_convert.html#wti_convert.main">[Doku]</a><span class="k">def</span> <span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">):</span>
+  <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">  Entpackt Dateien und startet die Konvertierung und Erstellung von Statistiken</span>
+<span class="sd">  </span>
+<span class="sd">  :param argv: Die beim Programmstart übergebenen Parameter</span>
+<span class="sd">  :type argv: list</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+  <span class="n">xml_filename</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+  <span class="n">xml_path</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+  <span class="n">out_path</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+  <span class="n">no_ext</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+  <span class="n">num_warn</span> <span class="o">=</span> <span class="mi">0</span>
+  <span class="n">num_files</span> <span class="o">=</span> <span class="mi">0</span>
+  <span class="n">adjusted_stats_path</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">STATS_PATH</span>
+  <span class="n">stats_only</span> <span class="o">=</span> <span class="kc">False</span>
+  <span class="n">no_stats</span> <span class="o">=</span> <span class="kc">False</span>
+  <span class="n">is_update</span> <span class="o">=</span> <span class="kc">False</span>
+  <span class="n">last_run</span> <span class="o">=</span> <span class="p">{}</span>
+
+  <span class="n">os</span><span class="o">.</span><span class="n">nice</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+  
+  <span class="k">if</span> <span class="s1">&#39;--help&#39;</span> <span class="ow">in</span> <span class="n">argv</span> <span class="ow">or</span> <span class="s1">&#39;-h&#39;</span> <span class="ow">in</span> <span class="n">argv</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">Constants</span><span class="o">.</span><span class="n">USAGE_STRING</span><span class="p">)</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">()</span>
+      
+  <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">arg</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">argv</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">arg</span> <span class="o">==</span> <span class="s1">&#39;--in&#39;</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">idx</span><span class="o">+</span><span class="mi">1</span> <span class="ow">and</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">]):</span>
+      <span class="k">if</span> <span class="ow">not</span> <span class="n">xml_path</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">xml_filename</span><span class="p">:</span>
+        <span class="n">xml_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">])[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">xml_filename</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">])[</span><span class="mi">1</span><span class="p">]</span>
+        
+      <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;More than one import path was supplied!&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">arg</span> <span class="o">==</span> <span class="s1">&#39;--out&#39;</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">:</span>
+      <span class="k">if</span> <span class="ow">not</span> <span class="n">out_path</span> <span class="ow">and</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">]):</span>
+        <span class="n">out_path</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
+      <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Output path does not exist, or multiple paths were supplied!&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">()</span>
+
+  <span class="k">if</span> <span class="ow">not</span> <span class="n">xml_path</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;No path given, using current directory..&quot;</span><span class="p">)</span>
+    <span class="n">xml_path</span> <span class="o">=</span> <span class="s1">&#39;.&#39;</span>
+
+  <span class="k">if</span> <span class="n">xml_filename</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">xml_filename</span><span class="o">.</span><span class="n">endswith</span><span class="p">((</span><span class="s1">&#39;.xml&#39;</span><span class="p">,</span> <span class="s1">&#39;.XML&#39;</span><span class="p">,</span><span class="s1">&#39;.XML.gz&#39;</span><span class="p">)):</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Filename has to end with .xml/.XML/.XML.gz&quot;</span><span class="p">)</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">()</span>
+
+  <span class="n">start_time</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span>
+  <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Start: {:%Y-%m-</span><span class="si">%d</span><span class="s1"> %H:%M:%S}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()))</span>
+  
+  <span class="k">if</span> <span class="ow">not</span> <span class="n">xml_filename</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">file</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="n">xml_path</span><span class="p">):</span>
+      <span class="k">if</span> <span class="n">file</span><span class="o">.</span><span class="n">endswith</span><span class="p">((</span><span class="s2">&quot;.xml&quot;</span><span class="p">,</span><span class="s2">&quot;.XML&quot;</span><span class="p">,</span><span class="s2">&quot;.XML.gz&quot;</span><span class="p">)):</span>
+        <span class="k">if</span> <span class="n">file</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;.XML.gz&quot;</span><span class="p">):</span>
+          
+          <span class="n">zfile</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">file</span><span class="p">)</span>
+          <span class="n">no_gz_ext</span> <span class="o">=</span> <span class="n">file</span><span class="p">[:</span><span class="n">file</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)]</span>
+          <span class="n">nzfile</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">no_gz_ext</span><span class="p">)</span>
+          
+          <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">nzfile</span><span class="p">):</span>
+            <span class="n">num_files</span> <span class="o">+=</span> <span class="mi">1</span>
+          
+          <span class="k">else</span><span class="p">:</span>
+            <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Decompressed file already exists..&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+          <span class="n">num_files</span> <span class="o">+=</span> <span class="mi">1</span>
+            
+  <span class="k">else</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">xml_filename</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;.XML.gz&quot;</span><span class="p">):</span>
+      <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Handling compressed file &quot;</span> <span class="o">+</span> <span class="n">xml_filename</span><span class="p">)</span>
+      
+      <span class="n">zfile</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">xml_filename</span><span class="p">)</span>
+      <span class="n">no_gz_ext</span> <span class="o">=</span> <span class="n">xml_filename</span><span class="p">[:</span><span class="n">xml_filename</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)]</span>
+      <span class="n">nzfile</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">no_gz_ext</span><span class="p">)</span>
+      
+      <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">nzfile</span><span class="p">):</span>
+        
+        <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Decompressing file &quot;</span> <span class="o">+</span> <span class="n">xml_filename</span><span class="p">)</span>
+        
+        <span class="k">with</span> <span class="n">gzip</span><span class="o">.</span><span class="n">GzipFile</span><span class="p">(</span><span class="n">zfile</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">inF</span><span class="p">:</span>
+          <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">nzfile</span><span class="p">,</span> <span class="s1">&#39;wb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">outF</span><span class="p">:</span>
+            <span class="n">s</span> <span class="o">=</span> <span class="n">inF</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+            <span class="n">outF</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+            
+      <span class="k">else</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Found existing decompressed file..&quot;</span><span class="p">)</span>
+          
+      <span class="n">xml_filename</span> <span class="o">=</span> <span class="n">no_gz_ext</span>
+  
+
+  <span class="k">if</span> <span class="ow">not</span> <span class="n">xml_filename</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Found &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">num_files</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; XML files!&quot;</span><span class="p">)</span>
+    
+  <span class="k">else</span><span class="p">:</span>
+    <span class="n">num_files</span> <span class="o">=</span> <span class="mi">1</span>
+
+  <span class="k">if</span> <span class="s1">&#39;--stats_only&#39;</span> <span class="ow">in</span> <span class="n">argv</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Only generating stats (not writing any output files)..&quot;</span><span class="p">)</span>
+    <span class="n">stats_only</span> <span class="o">=</span> <span class="kc">True</span>
+
+  <span class="k">if</span> <span class="s1">&#39;--no_stats&#39;</span> <span class="ow">in</span> <span class="n">argv</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Skipping stat generation..&quot;</span><span class="p">)</span>
+    <span class="n">no_stats</span> <span class="o">=</span> <span class="kc">True</span>
+
+  <span class="k">if</span> <span class="s1">&#39;--update&#39;</span> <span class="ow">in</span> <span class="n">argv</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Writing to subfolder..&quot;</span><span class="p">)</span>
+    <span class="n">is_update</span> <span class="o">=</span> <span class="kc">True</span>
+
+  <span class="n">gathered_stats</span><span class="p">,</span> <span class="n">num_warn</span><span class="p">,</span> <span class="n">cur_file</span> <span class="o">=</span> <span class="n">handle_xml</span><span class="p">(</span><span class="n">xml_path</span><span class="p">,</span> <span class="n">xml_filename</span><span class="p">,</span> <span class="n">num_files</span><span class="p">,</span> <span class="n">stats_only</span><span class="p">,</span> <span class="n">is_update</span><span class="p">,</span> <span class="n">out_path</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">xml_filename</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">cur_file</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+      <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;File not found!&quot;</span><span class="p">)</span>
+
+    <span class="k">else</span><span class="p">:</span>
+      <span class="n">no_ext</span> <span class="o">=</span> <span class="n">xml_filename</span><span class="p">[:</span><span class="n">xml_filename</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)]</span>
+
+  <span class="k">if</span> <span class="ow">not</span> <span class="n">no_stats</span> <span class="ow">and</span> <span class="n">cur_file</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">xml_filename</span><span class="p">:</span>
+      <span class="n">adjusted_stats_path</span> <span class="o">+=</span> <span class="n">no_ext</span> <span class="o">+</span> <span class="s2">&quot;/&quot;</span>
+
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">adjusted_stats_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Generating stats..&quot;</span><span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+      <span class="n">prepare_stats</span><span class="p">(</span><span class="n">gathered_stats</span><span class="p">,</span> <span class="n">adjusted_stats_path</span><span class="p">)</span>
+
+    <span class="k">except</span><span class="p">:</span>
+      <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Unexpected error creating stats:&quot;</span><span class="p">,</span> <span class="n">sys</span><span class="o">.</span><span class="n">exc_info</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span>
+
+  <span class="n">run_time</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span> <span class="o">-</span> <span class="n">start_time</span><span class="p">)))</span>
+  <span class="n">last_run</span><span class="p">[</span><span class="s1">&#39;date&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">current_date</span>
+  <span class="n">last_run</span><span class="p">[</span><span class="s1">&#39;runtime&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">run_time</span>
+  <span class="n">last_run</span><span class="p">[</span><span class="s1">&#39;records&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">gathered_stats</span><span class="p">[</span><span class="s1">&#39;num&#39;</span><span class="p">]</span>
+  <span class="n">last_run</span><span class="p">[</span><span class="s1">&#39;files&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">cur_file</span>
+
+  <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;End: {:%Y-%m-</span><span class="si">%d</span><span class="s1"> %H:%M:%S}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()))</span>
+  <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;Processed &#39;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">gathered_stats</span><span class="p">[</span><span class="s1">&#39;num&#39;</span><span class="p">])</span> <span class="o">+</span> <span class="s2">&quot; records in &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">cur_file</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; files!&quot;</span><span class="p">)</span>
+
+  <span class="k">if</span> <span class="n">num_warn</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s1">&#39;Problems with standard DTD: &#39;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">num_warn</span><span class="p">))</span>
+    <span class="n">last_run</span><span class="p">[</span><span class="s1">&#39;warnings&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">num_warn</span>
+
+  <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;last_run.json&quot;</span><span class="p">,</span> <span class="s2">&quot;w+&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">lr</span><span class="p">:</span>
+    <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">last_run</span><span class="p">,</span> <span class="n">lr</span><span class="p">)</span></div>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span>
+
+
+
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper"><div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../wti_convert.html">Documentation overview</a><ul>
+  <li><a href="index.html">Modul-Quellcode</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3>Schnellsuche</h3>
+    <form class="search" action="../search.html" method="get">
+      <div><input type="text" name="q" /></div>
+      <div><input type="submit" value="Los" /></div>
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2017, Moritz Horn.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 1.6.7</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.8</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

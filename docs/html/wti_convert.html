@@ -1,0 +1,321 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml" lang="de">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>WTI2PICA+ - Dokumentation &#8212; WTI2PICA+ 0.2 Dokumentation</title>
+    <link rel="stylesheet" href="_static/alabaster.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    './',
+        VERSION:     '0.2',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true,
+        SOURCELINK_SUFFIX: '.txt'
+      };
+    </script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/translations.js"></script>
+    <link rel="index" title="Stichwortverzeichnis" href="genindex.html" />
+    <link rel="search" title="Suche" href="search.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head>
+  <body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="wti2pica-dokumentation">
+<h1>WTI2PICA+ - Dokumentation<a class="headerlink" href="#wti2pica-dokumentation" title="Link zu dieser Überschrift">¶</a></h1>
+<div class="toctree-wrapper compound">
+</div>
+</div>
+<div class="section" id="mogliche-parameter">
+<h1>Mögliche Parameter<a class="headerlink" href="#mogliche-parameter" title="Link zu dieser Überschrift">¶</a></h1>
+<ul class="simple">
+<li>‚–help‘: Übersicht über die verfügbaren Parameter anzeigen</li>
+<li>‚–stats_only‘: Es werden nur Statistiken generiert, aber keine PICA-Dateien</li>
+<li>‚–no_stats‘: Generierung von Statistiken überspringen.</li>
+<li>‚–in‘: Pfad zu einem spezifischen Ordner (für mehrere Dateien) oder vollständiger Dateipfad für eine einzige Datei (Standardort ist der aktuelle Ordner)</li>
+<li>‚–out‘: Pfad zu einem Ordner, in den die fertigen Records gespeichert werden sollen</li>
+<li>‚–update‘: Die neuen Dateien werden in einen Unterordner im Output-Verzeichnis (standardmäßig in ‚.output/‘, oder explizit per ‚–out‘ definiert) mit dem aktuellen Datum als Namen geschrieben</li>
+</ul>
+</div>
+<div class="section" id="module-wti_convert">
+<span id="funktionen"></span><h1>Funktionen<a class="headerlink" href="#module-wti_convert" title="Link zu dieser Überschrift">¶</a></h1>
+<span class="target" id="module-wti_convert"></span><dl class="function">
+<dt id="wti_convert._decide_material">
+<code class="descclassname">wti_convert.</code><code class="descname">_decide_material</code><span class="sig-paren">(</span><em>dep</em>, <em>url</em>, <em>genres</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#_decide_material"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert._decide_material" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Diese Funktion generiert den Materialcode (002&#64;) aus Angaben im XML.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><ul class="first simple">
+<li><strong>dep</strong> (<em>bool</em>) – Abhängigkeit</li>
+<li><strong>url</strong> (<em>bool</em>) – Wurde eine URL gefunden?</li>
+<li><strong>genres</strong> (<em>list</em>) – Liste von documentGenreCodes</li>
+</ul>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Rückgabe:</th><td class="field-body"><p class="first last">str – der Materialcode</p>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert._match_isbns">
+<code class="descclassname">wti_convert.</code><code class="descname">_match_isbns</code><span class="sig-paren">(</span><em>isbn10</em>, <em>isbn13</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#_match_isbns"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert._match_isbns" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Versucht aus getrennten Listen von ISBN-10 und ISBN-13 Paare zu bilden.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><ul class="first last simple">
+<li><strong>isbn10</strong> (<em>list</em>) – Liste mit ISBN-10</li>
+<li><strong>isbn13</strong> (<em>list</em>) – Liste mit ISBN-13</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert._max_val">
+<code class="descclassname">wti_convert.</code><code class="descname">_max_val</code><span class="sig-paren">(</span><em>d</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#_max_val"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert._max_val" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Bestimmt den Maximalwert in einem Dictionary und gibt in mit dem dazugehörigen Key zurück.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><strong>d</strong> (<em>dict</em>) – Das zu untersuchende Python-Dictionary</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Rückgabe:</th><td class="field-body">list</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert._min_val">
+<code class="descclassname">wti_convert.</code><code class="descname">_min_val</code><span class="sig-paren">(</span><em>d</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#_min_val"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert._min_val" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Bestimmt den Minimalwert in einem Dictionary und gibt in mit dem dazugehörigen Key zurück.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><strong>d</strong> (<em>dict</em>) – Das zu untersuchende Python-Dictionary</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Rückgabe:</th><td class="field-body">list</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert._process_tails">
+<code class="descclassname">wti_convert.</code><code class="descname">_process_tails</code><span class="sig-paren">(</span><em>node</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#_process_tails"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert._process_tails" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Verarbeitet mögliche HTML-Tags in einem XML-Knoten</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><strong>node</strong> (<em>etree._Element</em>) – Der zu untersuchende XML-Knoten</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Rückgabe:</th><td class="field-body">str</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert.handle_xml">
+<code class="descclassname">wti_convert.</code><code class="descname">handle_xml</code><span class="sig-paren">(</span><em>xml_path</em>, <em>xml_filename</em>, <em>num_files</em>, <em>stats_only</em>, <em>is_update</em>, <em>out_path</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#handle_xml"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert.handle_xml" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Parst die XML-Dateien und kumuliert deren Statistiken.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><ul class="first simple">
+<li><strong>xml_path</strong> (<em>str</em>) – Der Pfad zu den XML-Dateien</li>
+<li><strong>xml_filename</strong> (<em>str</em>) – Ein eventuell gegebener spezifischer Dateiname in dem Verzeichnis</li>
+<li><strong>num_files</strong> (<em>int</em>) – Die Gesamtanzahl an XML-Dateien in dem Verzeichnis</li>
+<li><strong>stats_only</strong> (<em>bool</em>) – Eine Flag, ob die Ergebnisse mit <cite>write_to_file()</cite> geschrieben werden sollen</li>
+<li><strong>is_update</strong> – Eine Flag, ob die Ergebnisse in ein mit dem Datum benannten Unterverzeichnis gespeichert werden sollen</li>
+<li><strong>out_path</strong> (<em>str</em>) – Ein manuell angegebener Output-Pfad</li>
+</ul>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Rückgabe:</th><td class="field-body"><p class="first last">list</p>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert.main">
+<code class="descclassname">wti_convert.</code><code class="descname">main</code><span class="sig-paren">(</span><em>argv</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#main"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert.main" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Entpackt Dateien und startet die Konvertierung und Erstellung von Statistiken</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><strong>argv</strong> (<em>list</em>) – Die beim Programmstart übergebenen Parameter</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert.prepare_stats">
+<code class="descclassname">wti_convert.</code><code class="descname">prepare_stats</code><span class="sig-paren">(</span><em>stats</em>, <em>stats_path</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#prepare_stats"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert.prepare_stats" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Diese Funktion erzeugt CSV-Dateien für die Inhalte eines Dictionaries mit Statistiken.</p>
+<p>Struktur der <cite>stats</cite>:</p>
+<div class="highlight-default"><div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="s1">&#39;lang&#39;</span><span class="p">:{</span>
+    <span class="s1">&#39;num&#39;</span><span class="p">:{</span><span class="s1">&#39;1&#39;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="mi">50</span><span class="p">,</span> <span class="s1">&#39;2&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">},</span>
+    <span class="s1">&#39;names&#39;</span><span class="p">:{</span><span class="s1">&#39;de&#39;</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span> <span class="s1">&#39;en&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}</span>
+  <span class="p">},</span>
+  <span class="s1">&#39;genres&#39;</span><span class="p">:{</span>
+    <span class="s1">&#39;values&#39;</span><span class="p">:{</span><span class="s1">&#39;J&#39;</span><span class="p">:</span> <span class="mi">300</span><span class="p">,</span> <span class="s1">&#39;CA&#39;</span><span class="p">:</span> <span class="mi">80</span><span class="p">,</span> <span class="s1">&#39;B&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><strong>stats</strong> (<em>dict.</em>) – Die übergebenen Statistiken</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert.process_document">
+<code class="descclassname">wti_convert.</code><code class="descname">process_document</code><span class="sig-paren">(</span><em>document</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#process_document"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert.process_document" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Diese Funktion extrahiert PICA+-Felder und Statistiken zu diesen aus dem XML</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><strong>document</strong> (<em>etree._Element</em>) – Der XML-Knoten des Titels</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Rückgabe:</th><td class="field-body">list</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="wti_convert.write_to_file">
+<code class="descclassname">wti_convert.</code><code class="descname">write_to_file</code><span class="sig-paren">(</span><em>record</em>, <em>num_record</em>, <em>fpath</em><span class="sig-paren">)</span><a class="reference internal" href="_modules/wti_convert.html#write_to_file"><span class="viewcode-link">[Quellcode]</span></a><a class="headerlink" href="#wti_convert.write_to_file" title="Link zu dieser Definition">¶</a></dt>
+<dd><p>Diese Funktion liest eine Liste von PICA-Feldern und schreibt diese im PICA-Internformat in eine Datei.</p>
+<p>Struktur eines <cite>records</cite>:</p>
+<div class="highlight-default"><div class="highlight"><pre><span></span><span class="p">[</span>
+  <span class="p">{</span>
+    <span class="s1">&#39;031N&#39;</span><span class="p">:</span> <span class="p">[</span>
+      <span class="p">{</span><span class="s1">&#39;d&#39;</span><span class="p">:</span> <span class="s2">&quot;15&quot;</span><span class="p">},</span>
+      <span class="p">{</span><span class="s1">&#39;j&#39;</span><span class="p">:</span><span class="s2">&quot;2004&quot;</span><span class="p">}</span>
+    <span class="p">]</span>
+  <span class="p">},</span>
+  <span class="p">{</span>
+    <span class="s1">&#39;002@&#39;</span><span class="p">:</span> <span class="p">[</span>
+      <span class="p">{</span><span class="s1">&#39;0&#39;</span><span class="p">:</span> <span class="s2">&quot;Osx&quot;</span><span class="p">}</span>
+    <span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">]</span>
+</pre></div>
+</div>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameter:</th><td class="field-body"><ul class="first last simple">
+<li><strong>record</strong> (<em>list</em>) – die Liste mit PICA-Feldern</li>
+<li><strong>num_record</strong> (<em>int</em>) – die laufende Titelanzahl in der aktuellen Datei</li>
+<li><strong>fpath</strong> (<em>str</em>) – der Dateiname inklusive Pfad</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="#">Inhalt</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">WTI2PICA+ - Dokumentation</a></li>
+<li><a class="reference internal" href="#mogliche-parameter">Mögliche Parameter</a></li>
+<li><a class="reference internal" href="#module-wti_convert">Funktionen</a></li>
+</ul>
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="#">Documentation overview</a><ul>
+  </ul></li>
+</ul>
+</div>
+  <div role="note" aria-label="source link">
+    <h3>Diese Seite</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/wti_convert.rst.txt"
+            rel="nofollow">Quellcode anzeigen</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3>Schnellsuche</h3>
+    <form class="search" action="search.html" method="get">
+      <div><input type="text" name="q" /></div>
+      <div><input type="submit" value="Los" /></div>
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2017, Moritz Horn.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 1.6.7</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.8</a>
+      
+      |
+      <a href="_sources/wti_convert.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
